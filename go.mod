@@ -1,1 +1,3 @@
-module "china-chess"
+module github.com/fuyuntt/cchess
+
+go 1.14
