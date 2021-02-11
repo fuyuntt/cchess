@@ -8,13 +8,10 @@ import (
 
 func main() {
 	engine := ucci.CreateEngine()
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		cmd, err := reader.ReadString('\n')
-		if err != nil {
-			panic(err)
-		}
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		cmd := scanner.Text()
 		ctx := ucci.CreateCmdCtx(os.Stdout)
-		engine.ExecCommand(ctx, cmd[:len(cmd)-1])
+		engine.ExecCommand(ctx, cmd)
 	}
 }
