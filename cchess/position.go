@@ -2,6 +2,7 @@ package cchess
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -330,6 +331,28 @@ func (pos *Position) SearchMain(duration time.Duration) (Move, int) {
 		}
 	}
 	return searchCtx.mvResult, vl
+}
+func (pos *Position) String() string {
+	var sb strings.Builder
+	for i := 0; i < 10; i++ {
+		if i == 4 || i == 5 {
+			sb.WriteRune('-')
+		} else {
+			sb.WriteRune(' ')
+		}
+		sb.WriteString(pos.pcSquares[GetSquare(3, i+3)].String())
+		for j := 1; j < 9; j++ {
+			sb.WriteRune('-')
+			sb.WriteString(pos.pcSquares[GetSquare(j+3, i+3)].String())
+		}
+		if i == 4 || i == 5 {
+			sb.WriteRune('-')
+		} else {
+			sb.WriteRune(' ')
+		}
+		sb.WriteRune('\n')
+	}
+	return sb.String()
 }
 
 // 创建局面

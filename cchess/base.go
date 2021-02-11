@@ -8,20 +8,20 @@ const (
 	PcNop Piece = 0x00
 
 	PcRKing    Piece = 0x08
-	PcRAdvisor       = 0x09
-	PcRBishop        = 0x0A
-	PcRKnight        = 0x0B
-	PcRRook          = 0x0C
-	PcRCannon        = 0x0D
-	PcRPawn          = 0x0E
+	PcRAdvisor Piece = 0x09
+	PcRBishop  Piece = 0x0A
+	PcRKnight  Piece = 0x0B
+	PcRRook    Piece = 0x0C
+	PcRCannon  Piece = 0x0D
+	PcRPawn    Piece = 0x0E
 
 	PcBKing    Piece = 0x10
-	PcBAdvisor       = 0x11
-	PcBBishop        = 0x12
-	PcBKnight        = 0x13
-	PcBRook          = 0x14
-	PcBCannon        = 0x15
-	PcBPawn          = 0x16
+	PcBAdvisor Piece = 0x11
+	PcBBishop  Piece = 0x12
+	PcBKnight  Piece = 0x13
+	PcBRook    Piece = 0x14
+	PcBCannon  Piece = 0x15
+	PcBPawn    Piece = 0x16
 )
 
 func GetPiece(pieceType PieceType, side Side) Piece {
@@ -34,25 +34,34 @@ func (pc Piece) GetSide() Side {
 func (pc Piece) GetType() PieceType {
 	return PieceType(pc & 0x07)
 }
+func (pc Piece) String() string {
+	pcType := pc.GetType()
+	if pc.GetSide() == SdRed {
+		return "kabnrcp"[pcType : pcType+1]
+	} else if pc.GetSide() == SdBlack {
+		return "KABNRCP"[pcType : pcType+1]
+	} else {
+		return "+"
+	}
+}
 
 type PieceType int8
 
 const (
 	PtKing    PieceType = 0x00
-	PtAdvisor           = 0x01
-	PtBishop            = 0x02
-	PtKnight            = 0x03
-	PtRook              = 0x04
-	PtCannon            = 0x05
-	PtPawn              = 0x06
+	PtAdvisor PieceType = 0x01
+	PtBishop  PieceType = 0x02
+	PtKnight  PieceType = 0x03
+	PtRook    PieceType = 0x04
+	PtCannon  PieceType = 0x05
+	PtPawn    PieceType = 0x06
 )
 
 type Side int8
 
 const (
-	SdNop   Side = 0x00
-	SdRed        = 0x01
-	SdBlack      = 0x02
+	SdRed   Side = 0x01
+	SdBlack Side = 0x02
 )
 
 // 对方
