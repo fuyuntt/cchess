@@ -2,7 +2,7 @@ package ucci
 
 import (
 	"fmt"
-	"github.com/fuyuntt/cchess/cchess"
+	"github.com/fuyuntt/cchess/ppos"
 	"github.com/sirupsen/logrus"
 	"io"
 	"strings"
@@ -10,7 +10,7 @@ import (
 )
 
 type Engine struct {
-	pos *cchess.Position
+	pos *ppos.Position
 }
 
 func (engine *Engine) ExecCommand(ctx *CmdCtx, cmdStr string) {
@@ -69,6 +69,6 @@ func (ctx *CmdCtx) fPrintln(a ...interface{}) {
 	}
 }
 
-func convertMv(mv cchess.Move) string {
+func convertMv(mv ppos.Move) string {
 	return string([]rune{rune('a' + mv.Src().GetX() - 3), rune('0' + mv.Src().GetY() - 3), rune('a' + mv.Dst().GetX() - 3), rune('0' + mv.Dst().GetY() - 3)})
 }

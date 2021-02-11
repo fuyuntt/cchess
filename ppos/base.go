@@ -1,4 +1,4 @@
-package cchess
+package ppos
 
 import "fmt"
 
