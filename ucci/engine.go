@@ -14,6 +14,7 @@ type Engine struct {
 }
 
 func (engine *Engine) ExecCommand(ctx *CmdCtx, cmdStr string) {
+	logrus.Infof("cmd: %s", cmdStr)
 	cmdParam := strings.SplitN(cmdStr, " ", 2)
 	switch cmdParam[0] {
 	case "ucci":
@@ -38,7 +39,7 @@ func (engine *Engine) ucci(ctx *CmdCtx) {
 	ctx.fPrintln("id user 2004-2006 www.fuyuntt.com")
 
 	ctx.fPrintln("option usemillisec type check")
-	ctx.fPrintln("ucci ok")
+	ctx.fPrintln("ucciok")
 }
 
 func (engine *Engine) isReady(ctx *CmdCtx) {
@@ -55,7 +56,7 @@ func (engine *Engine) position(fen string) {
 
 func (engine *Engine) goThink(ctx *CmdCtx) {
 	move, vl := engine.pos.SearchMain(3 * time.Second)
-	mvStr := convertMv(move)
+	mvStr := move.ICCS()
 	logrus.Infof("move: %s, vl %d", mvStr, vl)
 	ctx.fPrintln("bestmove " + mvStr)
 }
@@ -78,8 +79,4 @@ func (ctx *CmdCtx) fPrintln(a ...interface{}) {
 	if err != nil {
 		logrus.Errorf("output write failure. %v, err=%v", a, err)
 	}
-}
-
-func convertMv(mv ppos.Move) string {
-	return string([]rune{rune('a' + mv.Src().GetX() - 3), rune('0' + mv.Src().GetY() - 3), rune('a' + mv.Dst().GetX() - 3), rune('0' + mv.Dst().GetY() - 3)})
 }

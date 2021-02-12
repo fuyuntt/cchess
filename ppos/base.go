@@ -90,11 +90,29 @@ func (mv Move) Dst() Square {
 	return Square(mv >> 8)
 }
 func (mv Move) String() string {
-	return fmt.Sprintf("0x%x", int(mv))
+	return mv.ICCS()
+}
+func (mv Move) ICCS() string {
+	return string([]rune{
+		rune('a' + mv.Src().GetX()),
+		rune('0' + 9 - mv.Src().GetY()),
+		rune('a' + mv.Dst().GetX()),
+		rune('0' + 9 - mv.Dst().GetY())},
+	)
 }
 
 func GetMove(src Square, dst Square) Move {
 	return Move(dst<<8 + src)
+}
+func GetMoveFromICCS(iccs string) Move {
+	srcX, srcY, dstX, dstY := iccsToX(iccs[0]), iccsToY(iccs[1]), iccsToX(iccs[2]), iccsToY(iccs[3])
+	return GetMove(GetSquare(srcX, srcY), GetSquare(dstX, dstY))
+}
+func iccsToX(c byte) int {
+	return int(c - 'a')
+}
+func iccsToY(c byte) int {
+	return int(9 - (c - '0'))
 }
 
 type MoveSorter struct {
@@ -117,10 +135,10 @@ func (sorter MoveSorter) Swap(i, j int) {
 type Square int
 
 func (sq Square) GetX() int {
-	return int(sq & 0x0f)
+	return int(sq&0x0f) - 3
 }
 func (sq Square) GetY() int {
-	return int(sq >> 4)
+	return int(sq>>4) - 3
 }
 func (sq Square) String() string {
 	return fmt.Sprintf("%2x", int(sq))
@@ -131,6 +149,8 @@ func (sq Square) Flip() Square {
 	return 0xfe - sq
 }
 func GetSquare(x, y int) Square {
+	x += 3
+	y += 3
 	return Square(y<<4 + x)
 }
 

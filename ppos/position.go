@@ -1,6 +1,7 @@
 package ppos
 
 import (
+	"github.com/sirupsen/logrus"
 	"sort"
 	"strings"
 	"time"
@@ -8,6 +9,9 @@ import (
 
 // 最大深度
 const limitDepth = 32
+
+// 初始move长度
+const initMovesSize = 40
 
 // 杀棋分
 const mateValue = 10000
@@ -22,10 +26,17 @@ type SearchCtx struct {
 	// 电脑走的棋
 	mvResult Move
 
-	moves []Move
-
 	// 距离根节点的步数
 	nDistance int
+
+	// 已搜索的局面数
+	nPositionCount int
+
+	// 停止搜索的时间
+	stopSearchTime time.Time
+
+	// 停止搜索
+	stopSearch bool
 
 	// 历史表
 	historyTable [65536]int
@@ -273,13 +284,16 @@ func (pos *Position) UndoMakeMove(move Move, pcCaptured Piece) {
 
 func (pos *Position) searchAlphaBeta(searchCtx *SearchCtx, vlAlpha int, vlBeta int, depth int) int {
 	if depth == 0 {
+		searchCtx.nPositionCount++
+		if searchCtx.nPositionCount&0x1fff == 0 && time.Now().After(searchCtx.stopSearchTime) {
+			searchCtx.stopSearch = true
+		}
 		return pos.Evaluate()
 	}
-	moves := searchCtx.moves[:0]
+	moves := make([]Move, 0, initMovesSize)
 	vlBest := -mateValue
 	var mvBest = MvNop
 	moves = pos.GenerateMoves(moves)
-	searchCtx.moves = moves
 	sort.Sort(MoveSorter{moves: moves, eval: func(mv Move) int {
 		return searchCtx.historyTable[mv]
 	}})
@@ -292,6 +306,9 @@ func (pos *Position) searchAlphaBeta(searchCtx *SearchCtx, vlAlpha int, vlBeta i
 		vl := -pos.searchAlphaBeta(searchCtx, -vlBeta, -vlAlpha, depth-1)
 		pos.UndoMakeMove(mv, pcCaptured)
 		searchCtx.nDistance--
+		if searchCtx.stopSearch {
+			return 0
+		}
 		if vl > vlBest {
 			vlBest = vl
 			if vl >= vlBeta {
@@ -318,19 +335,29 @@ func (pos *Position) searchAlphaBeta(searchCtx *SearchCtx, vlAlpha int, vlBeta i
 }
 
 func (pos *Position) SearchMain(duration time.Duration) (Move, int) {
-	t := time.Now()
+	startTime := time.Now()
 	searchCtx := &SearchCtx{}
+	searchCtx.stopSearchTime = time.Now().Add(duration)
 	vl := 0
-	for i := 0; i < limitDepth; i++ {
-		vl = pos.searchAlphaBeta(searchCtx, -mateValue, mateValue, i)
+	bestMove := MvNop
+	nPositions := 0
+	maxDepth := 0
+	for ; maxDepth < limitDepth; maxDepth++ {
+		searchCtx.nPositionCount = 0
+		res := pos.searchAlphaBeta(searchCtx, -mateValue, mateValue, maxDepth)
+		if searchCtx.stopSearch {
+			maxDepth--
+			break
+		}
+		vl = res
+		bestMove = searchCtx.mvResult
+		nPositions = searchCtx.nPositionCount
 		if vl > winValue || vl < -winValue {
 			break
 		}
-		if time.Now().Sub(t) > duration {
-			break
-		}
 	}
-	return searchCtx.mvResult, vl
+	logrus.Infof("search depth: %d, search nodes: %d, search time: %v", maxDepth, nPositions, time.Now().Sub(startTime))
+	return bestMove, vl
 }
 func (pos *Position) String() string {
 	var sb strings.Builder

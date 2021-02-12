@@ -53,8 +53,7 @@ func parsePosition(positionStr string) (*ppos.Position, error) {
 			}
 			for i++; i < len(parts); i++ {
 				mv := parts[i]
-				srcX, srcY, dstX, dstY := int(3+mv[0]-'a'), int(3+mv[1]), int(3+mv[2]-'a'), int(3+mv[3])
-				_, success := pos.MakeMove(ppos.GetMove(ppos.GetSquare(srcX, srcY), ppos.GetSquare(dstX, dstY)))
+				_, success := pos.MakeMove(ppos.GetMoveFromICCS(mv))
 				if !success {
 					return nil, fmt.Errorf("illegl move: %s", positionStr)
 				}
@@ -67,13 +66,13 @@ func parsePosition(positionStr string) (*ppos.Position, error) {
 func parseFen(fenStr string) (*ppos.Position, error) {
 	pos := ppos.CreatePosition()
 	fenParts := strings.Split(fenStr, " ")
-	x, y := 3, 3
+	x, y := 0, 0
 	for _, b := range fenParts[0] {
 		if b >= '0' && b <= '9' {
 			x += int(b - '0')
 		} else if b == '/' {
 			y++
-			x = 3
+			x = 0
 		} else {
 			piece, ok := pieceMap[b]
 			if !ok {

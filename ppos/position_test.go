@@ -17,3 +17,9 @@ func TestPosition(t *testing.T) {
 	mv, vl := pos.SearchMain(30 * time.Second)
 	fmt.Println(mv.String(), vl)
 }
+
+func TestMv(t *testing.T) {
+	mv := GetMoveFromICCS("h5i6")
+	fmt.Println(GetMove(0x47, 0x38))
+	fmt.Println(mv.String())
+}
