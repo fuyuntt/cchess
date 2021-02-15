@@ -1,6 +1,9 @@
 package ppos
 
-import "fmt"
+import (
+	"crypto/rc4"
+	"fmt"
+)
 
 type Piece int8
 
@@ -215,4 +218,39 @@ func toBoolArr(origin [256]int) [256]bool {
 		res[i] = origin[i] == 1
 	}
 	return res
+}
+
+// 局面的Hash值，使用Zobrist算法，可非常快速产生Hash值
+type ZobristHash uint64
+
+var playerZobrist ZobristHash
+var pieceZobrist [14][256]ZobristHash
+
+func init() {
+	cipher, _ := rc4.NewCipher([]byte{0})
+	nextZobrist := func() ZobristHash {
+		src, dst := []byte{0, 0, 0, 0}, make([]byte, 4)
+		cipher.XORKeyStream(dst, src)
+		var res ZobristHash
+		for i := 0; i < 4; i++ {
+			res += ZobristHash(dst[i]) << (i * 8)
+		}
+		return res
+	}
+	playerZobrist = nextZobrist()
+	for i := 0; i < 14; i++ {
+		for j := 0; j < 256; j++ {
+			pieceZobrist[i][j] = nextZobrist()
+		}
+	}
+}
+
+func GetZobrist(square Square, piece Piece) ZobristHash {
+	var pcIdx int
+	if piece.GetSide() == SdRed {
+		pcIdx = int(piece.GetType())
+	} else {
+		pcIdx = int(piece.GetType()) + 7
+	}
+	return pieceZobrist[pcIdx][square]
 }

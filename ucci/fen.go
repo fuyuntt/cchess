@@ -53,7 +53,7 @@ func parsePosition(positionStr string) (*ppos.Position, error) {
 			}
 			for i++; i < len(parts); i++ {
 				mv := parts[i]
-				_, success := pos.MakeMove(ppos.GetMoveFromICCS(mv))
+				success := pos.MakeMove(ppos.GetMoveFromICCS(mv))
 				if !success {
 					return nil, fmt.Errorf("illegl move: %s", positionStr)
 				}

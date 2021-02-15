@@ -8,7 +8,7 @@ import (
 )
 
 // 最大深度
-const limitDepth = 32
+const limitDepth = 64
 
 // 初始move长度
 const initMovesSize = 40
@@ -16,18 +16,24 @@ const initMovesSize = 40
 // 杀棋分
 const mateValue = 10000
 
+// 和棋分
+const drawValue = -20
+
 // 搜索出胜局的分数
 const winValue = mateValue - 100
 
 // 先行优势
 const advancedValue = 3
 
-type SearchCtx struct {
+// 空着裁剪阈值
+const nullPruneThreshold = 400
+
+// 空着裁剪深度
+const nullPruneDepth = 2
+
+type searchCtx struct {
 	// 电脑走的棋
 	mvResult Move
-
-	// 距离根节点的步数
-	nDistance int
 
 	// 已搜索的局面数
 	nPositionCount int
@@ -38,8 +44,24 @@ type SearchCtx struct {
 	// 停止搜索
 	stopSearch bool
 
+	// 在空着搜索过程中
+	inNullMoveSearch bool
+
+	// 开始搜索时局面的distance
+	initDistance int
+
+	// 此次搜索最大距离
+	maxDistance int
+
 	// 历史表
 	historyTable [65536]int
+}
+
+type HistoryMove struct {
+	move       Move
+	pcCaptured Piece
+	checked    bool
+	posZobrist ZobristHash
 }
 
 type Position struct {
@@ -51,31 +73,49 @@ type Position struct {
 	vlRed int
 	// 黑旗分
 	vlBlack int
+
+	// 局面zobrist
+	zobrist ZobristHash
+
+	// 走棋栈，可从中找到是否有重复局面
+	mvStack []HistoryMove
+
+	// 距离根节点的步数
+	nDistance int
 }
 
 func (pos *Position) ChangeSide() {
 	pos.playerSd = pos.playerSd.OpSide()
+	pos.zobrist ^= playerZobrist
 }
 func (pos *Position) AddPiece(sq Square, pc Piece) {
 	pos.pcSquares[sq] = pc
+	if pc == PcNop {
+		return
+	}
 	side := pc.GetSide()
 	pcValue := pieceValue[pc.GetType()]
 	if side == SdRed {
 		pos.vlRed += pcValue[sq]
-	} else if side == SdBlack {
+	} else {
 		pos.vlBlack += pcValue[sq.Flip()]
 	}
+	pos.zobrist ^= GetZobrist(sq, pc)
 }
 func (pos *Position) DelPiece(sq Square) Piece {
 	pcCaptured := pos.pcSquares[sq]
+	if pcCaptured == PcNop {
+		return PcNop
+	}
 	pos.pcSquares[sq] = PcNop
 	side := pcCaptured.GetSide()
 	pcValueTable := pieceValue[pcCaptured.GetType()]
 	if side == SdRed {
 		pos.vlRed -= pcValueTable[sq]
-	} else if side == SdBlack {
+	} else {
 		pos.vlBlack -= pcValueTable[sq.Flip()]
 	}
+	pos.zobrist ^= GetZobrist(sq, pcCaptured)
 	return pcCaptured
 }
 
@@ -153,12 +193,12 @@ func (pos *Position) Checked() bool {
 	}
 	return false
 }
-func (pos *Position) GenerateMoves(moves []Move) []Move {
-	// 生成所有走法
-	//	int i, j, nGenMoves, nDelta, sqSrc, sqDst;
-	//	int pcSelfSide, pcOppSide, pcSrc, pcDst;
-	// 生成所有走法，需要经过以下几个步骤：
 
+// onlyCapture=ture  只生成吃子的走法，否则生成所有走法
+func (pos *Position) GenerateMoves(moves []Move, onlyCapture bool) []Move {
+	var testCapture = func(pcDst Piece) bool {
+		return !onlyCapture || pcDst != PcNop
+	}
 	for sqSrc := SqStart; sqSrc <= SqEnd; sqSrc++ {
 		pcSrc := pos.pcSquares[sqSrc]
 		if pcSrc.GetSide() != pos.playerSd {
@@ -167,12 +207,12 @@ func (pos *Position) GenerateMoves(moves []Move) []Move {
 		switch pcSrc.GetType() {
 		case PtKing:
 			for i := 0; i < 4; i++ {
-				var sqDst = sqSrc + kingMoveTab[i]
+				var sqDst = sqSrc + lineMoveDelta[i]
 				if !sqDst.InFort() {
 					continue
 				}
 				pcDst := pos.pcSquares[sqDst]
-				if pcDst.GetSide() != pos.playerSd {
+				if pcDst.GetSide() != pos.playerSd && testCapture(pcDst) {
 					moves = append(moves, GetMove(sqSrc, sqDst))
 				}
 			}
@@ -183,16 +223,22 @@ func (pos *Position) GenerateMoves(moves []Move) []Move {
 					continue
 				}
 				pcDst := pos.pcSquares[sqDst]
-				if pcDst.GetSide() != pos.playerSd {
+				if pcDst.GetSide() != pos.playerSd && testCapture(pcDst) {
 					moves = append(moves, GetMove(sqSrc, sqDst))
 				}
 			}
 		case PtBishop:
 			for i := 0; i < 4; i++ {
 				sqDst := sqSrc + bishopMoveTab[i]
+				if !sqDst.InBoard() || sqDst.GetSide() != pos.playerSd {
+					continue
+				}
 				sqBishopPin := (sqSrc + sqDst) >> 1
-				if sqDst.InBoard() && sqDst.GetSide() == pos.playerSd &&
-					pos.pcSquares[sqBishopPin] == PcNop && pos.pcSquares[sqDst].GetSide() != pos.playerSd {
+				if pos.pcSquares[sqBishopPin] != PcNop {
+					continue
+				}
+				pcDst := pos.pcSquares[sqDst]
+				if pcDst.GetSide() != pos.playerSd && testCapture(pcDst) {
 					moves = append(moves, GetMove(sqSrc, sqDst))
 				}
 			}
@@ -206,10 +252,10 @@ func (pos *Position) GenerateMoves(moves []Move) []Move {
 				if pos.pcSquares[sqPin] != PcNop {
 					continue
 				}
-				if pos.pcSquares[sqDst].GetSide() == pos.playerSd {
-					continue
+				pcDst := pos.pcSquares[sqDst]
+				if pcDst.GetSide() != pos.playerSd && testCapture(pcDst) {
+					moves = append(moves, GetMove(sqSrc, sqDst))
 				}
-				moves = append(moves, GetMove(sqSrc, sqDst))
 			}
 		case PtRook:
 			for i := 0; i < 4; i++ {
@@ -217,7 +263,10 @@ func (pos *Position) GenerateMoves(moves []Move) []Move {
 				for sqDst := sqSrc + sqDelta; sqDst.InBoard(); sqDst += sqDelta {
 					pcDst := pos.pcSquares[sqDst]
 					if pcDst == PcNop {
-						moves = append(moves, GetMove(sqSrc, sqDst))
+						if !onlyCapture {
+							moves = append(moves, GetMove(sqSrc, sqDst))
+						}
+						continue
 					} else {
 						if pcDst.GetSide() != pos.playerSd {
 							moves = append(moves, GetMove(sqSrc, sqDst))
@@ -233,7 +282,10 @@ func (pos *Position) GenerateMoves(moves []Move) []Move {
 				for ; sqDst.InBoard(); sqDst += sqDelta {
 					pcDst := pos.pcSquares[sqDst]
 					if pcDst == PcNop {
-						moves = append(moves, GetMove(sqSrc, sqDst))
+						if !onlyCapture {
+							moves = append(moves, GetMove(sqSrc, sqDst))
+						}
+						continue
 					} else {
 						break
 					}
@@ -251,13 +303,15 @@ func (pos *Position) GenerateMoves(moves []Move) []Move {
 			}
 		case PtPawn:
 			sqDst := sqForward(sqSrc, pos.playerSd)
-			if sqDst.InBoard() && pos.pcSquares[sqDst].GetSide() != pos.playerSd {
+			pcDst := pos.pcSquares[sqDst]
+			if sqDst.InBoard() && pcDst.GetSide() != pos.playerSd && testCapture(pcDst) {
 				moves = append(moves, GetMove(sqSrc, sqDst))
 			}
 			if sqSrc.GetSide() != pos.playerSd {
 				for delta := Square(-0x01); delta <= 0x01; delta += 0x02 {
-					sqDst = sqSrc + delta
-					if sqDst.InBoard() && pos.pcSquares[sqDst].GetSide() != pos.playerSd {
+					sqDst := sqSrc + delta
+					pcDst := pos.pcSquares[sqDst]
+					if sqDst.InBoard() && pcDst.GetSide() != pos.playerSd && testCapture(pcDst) {
 						moves = append(moves, GetMove(sqSrc, sqDst))
 					}
 				}
@@ -268,45 +322,95 @@ func (pos *Position) GenerateMoves(moves []Move) []Move {
 }
 
 // 走棋 会变更当前走棋方
-func (pos *Position) MakeMove(move Move) (Piece, bool) {
+func (pos *Position) MakeMove(move Move) bool {
+	preZob := pos.zobrist
 	pcCaptured := pos.MovePiece(move)
 	if pos.Checked() {
 		pos.UndoMovePiece(move, pcCaptured)
-		return PcNop, false
+		return false
 	}
 	pos.ChangeSide()
-	return pcCaptured, true
-}
-func (pos *Position) UndoMakeMove(move Move, pcCaptured Piece) {
-	pos.ChangeSide()
-	pos.UndoMovePiece(move, pcCaptured)
+	pos.mvStack = append(pos.mvStack, HistoryMove{move, pcCaptured, pos.Checked(), preZob})
+	pos.nDistance++
+	return true
 }
 
-func (pos *Position) searchAlphaBeta(searchCtx *SearchCtx, vlAlpha int, vlBeta int, depth int) int {
-	if depth == 0 {
-		searchCtx.nPositionCount++
-		if searchCtx.nPositionCount&0x1fff == 0 && time.Now().After(searchCtx.stopSearchTime) {
-			searchCtx.stopSearch = true
-		}
-		return pos.Evaluate()
+// 等效 MakeMove(MvNop) 但是更快
+func (pos *Position) makeNullMove() {
+	pos.ChangeSide()
+	pos.mvStack = append(pos.mvStack, HistoryMove{MvNop, PcNop, pos.InCheck(), pos.zobrist})
+	pos.nDistance++
+}
+func (pos *Position) UndoMakeMove() {
+	pos.ChangeSide()
+	moveHis := pos.mvStack[pos.nDistance]
+	pos.UndoMovePiece(moveHis.move, moveHis.pcCaptured)
+	pos.nDistance--
+	pos.mvStack = pos.mvStack[:pos.nDistance+1]
+}
+
+// 等效 UndoMakeMove() 但是更快
+func (pos *Position) undoNullMove() {
+	pos.ChangeSide()
+	pos.nDistance--
+	pos.mvStack = pos.mvStack[:pos.nDistance+1]
+}
+
+// 当前局面能否空着裁剪
+func (pos *Position) nullOk() bool {
+	if pos.playerSd == SdRed {
+		return pos.vlRed > nullPruneThreshold
+	} else {
+		return pos.vlBlack > nullPruneThreshold
 	}
+}
+func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int) int {
+	tickSearch(ctx)
+	if pos.nDistance > ctx.initDistance {
+		// 1. 到达水平线，使用静态局面搜索
+		if depth <= 0 {
+			return pos.searchQuiescent(ctx, vlAlpha, vlBeta)
+		}
+
+		// 1-1. 检查重复局面
+		rep, vl := pos.CheckReputation()
+		if rep {
+			return vl
+		}
+
+		// 1-2. 到达极限深度就返回局面评价
+		if pos.nDistance == ctx.maxDistance {
+			return pos.Evaluate()
+		}
+
+		// 1-3. 尝试空步裁剪
+		if !ctx.inNullMoveSearch && !pos.InCheck() && pos.nullOk() {
+			ctx.inNullMoveSearch = true
+			pos.makeNullMove()
+			// 窗口缩小
+			vl = -pos.searchAlphaBeta(ctx, -vlBeta, 1-vlBeta, depth-1-nullPruneDepth)
+			pos.undoNullMove()
+			ctx.inNullMoveSearch = false
+			if vl >= vlBeta {
+				return vl
+			}
+		}
+	}
+
 	moves := make([]Move, 0, initMovesSize)
 	vlBest := -mateValue
 	var mvBest = MvNop
-	moves = pos.GenerateMoves(moves)
+	moves = pos.GenerateMoves(moves, false)
 	sort.Sort(MoveSorter{moves: moves, eval: func(mv Move) int {
-		return searchCtx.historyTable[mv]
+		return ctx.historyTable[mv]
 	}})
 	for _, mv := range moves {
-		pcCaptured, success := pos.MakeMove(mv)
-		if !success {
+		if !pos.MakeMove(mv) {
 			continue
 		}
-		searchCtx.nDistance++
-		vl := -pos.searchAlphaBeta(searchCtx, -vlBeta, -vlAlpha, depth-1)
-		pos.UndoMakeMove(mv, pcCaptured)
-		searchCtx.nDistance--
-		if searchCtx.stopSearch {
+		vl := -pos.searchAlphaBeta(ctx, -vlBeta, -vlAlpha, depth-1)
+		pos.UndoMakeMove()
+		if ctx.stopSearch {
 			return 0
 		}
 		if vl > vlBest {
@@ -323,40 +427,166 @@ func (pos *Position) searchAlphaBeta(searchCtx *SearchCtx, vlAlpha int, vlBeta i
 	}
 	// 所有的move都无法走 杀棋!
 	if vlBest == -mateValue {
-		return searchCtx.nDistance - mateValue
+		return pos.nDistance - ctx.initDistance - mateValue
 	}
 	if mvBest != MvNop {
-		searchCtx.historyTable[mvBest] += depth * depth
-		if searchCtx.nDistance == 0 {
-			searchCtx.mvResult = mvBest
+		ctx.historyTable[mvBest] += depth * depth
+		if pos.nDistance == ctx.initDistance {
+			ctx.mvResult = mvBest
 		}
 	}
 	return vlBest
 }
 
+// 搜索中的状态检查
+func tickSearch(searchCtx *searchCtx) {
+	searchCtx.nPositionCount++
+	if searchCtx.nPositionCount&0x1fff == 0 && time.Now().After(searchCtx.stopSearchTime) {
+		searchCtx.stopSearch = true
+	}
+}
+func (pos *Position) searchQuiescent(ctx *searchCtx, vlAlpha, vlBeta int) int {
+	// 1. 检查重复局面
+	rep, vl := pos.CheckReputation()
+	if rep {
+		return vl
+	}
+
+	// 2. 到达极限深度就返回局面评价
+	if pos.nDistance == ctx.maxDistance {
+		return pos.Evaluate()
+	}
+
+	// 3. 初始化最佳值
+	vlBest := -mateValue
+
+	moves := make([]Move, 0, initMovesSize)
+	if pos.InCheck() {
+		// 4. 如果被将军，则生成全部走法
+		moves = pos.GenerateMoves(moves, false)
+		sort.Sort(MoveSorter{moves: moves, eval: func(mv Move) int {
+			return ctx.historyTable[mv]
+		}})
+	} else {
+		// 5. 如果不被将军，先做局面评价
+		vl = pos.Evaluate()
+		if vl > vlBest {
+			vlBest = vl
+			if vl >= vlBeta {
+				return vl
+			}
+			if vl > vlAlpha {
+				vlAlpha = vl
+			}
+		}
+
+		// 6. 如果局面评价没有截断，再生成吃子走法
+		moves = pos.GenerateMoves(moves, true)
+		sort.Sort(MoveSorter{moves: moves, eval: func(mv Move) int {
+			return pos.mvvLvaValue(mv)
+		}})
+	}
+
+	// 7. 逐一走这些走法，并进行递归
+	for _, mv := range moves {
+		if !pos.MakeMove(mv) {
+			continue
+		}
+		vl = -pos.searchQuiescent(ctx, -vlBeta, -vlAlpha)
+		pos.UndoMakeMove()
+
+		if vl > vlBest {
+			vlBest = vl
+			if vl >= vlBeta {
+				return vl
+			}
+			if vl > vlAlpha {
+				vlAlpha = vl
+			}
+		}
+	}
+
+	if vlBest == -mateValue {
+		return pos.nDistance - ctx.initDistance - mateValue
+	} else {
+		return vlBest
+	}
+}
+
+func (pos *Position) mvvLvaValue(mv Move) int {
+	return mvvLvaPieceValue[pos.pcSquares[mv.Dst()]]<<3 - mvvLvaPieceValue[pos.pcSquares[mv.Src()]]
+}
+
+func (pos *Position) InCheck() bool {
+	if pos.nDistance == 0 {
+		return pos.Checked()
+	} else {
+		return pos.mvStack[pos.nDistance].checked
+	}
+}
+
+// 检查重复局面
+// return 是否有重复局面， 重复局面的评分（输，赢，和）
+func (pos *Position) CheckReputation() (bool, int) {
+	selfSide := false
+	selfAlwaysCheck, opAlwaysCheck := true, true
+	for mvIdx := pos.nDistance; mvIdx > 0; mvIdx-- {
+		moveHistory := pos.mvStack[mvIdx]
+		// 吃子着法肯定不会重复
+		if moveHistory.pcCaptured != PcNop {
+			break
+		}
+		if selfSide {
+			selfAlwaysCheck = selfAlwaysCheck && moveHistory.checked
+			if moveHistory.posZobrist == pos.zobrist {
+				return true, reputationValue(selfAlwaysCheck, opAlwaysCheck)
+			}
+		} else {
+			opAlwaysCheck = opAlwaysCheck && moveHistory.checked
+		}
+		selfSide = !selfSide
+	}
+	return false, 0
+}
+
+func reputationValue(selfAlwaysCheck, opAlwaysCheck bool) int {
+	vl := 0
+	if selfAlwaysCheck {
+		vl += -mateValue
+	}
+	if opAlwaysCheck {
+		vl += mateValue
+	}
+	if vl == 0 {
+		vl = -drawValue
+	}
+	return vl
+}
 func (pos *Position) SearchMain(duration time.Duration) (Move, int) {
 	startTime := time.Now()
-	searchCtx := &SearchCtx{}
-	searchCtx.stopSearchTime = time.Now().Add(duration)
+	ctx := &searchCtx{}
+	ctx.stopSearchTime = time.Now().Add(duration)
+	ctx.initDistance = pos.nDistance
+	ctx.maxDistance = pos.nDistance + limitDepth
 	vl := 0
 	bestMove := MvNop
 	nPositions := 0
 	maxDepth := 0
 	for ; maxDepth < limitDepth; maxDepth++ {
-		searchCtx.nPositionCount = 0
-		res := pos.searchAlphaBeta(searchCtx, -mateValue, mateValue, maxDepth)
-		if searchCtx.stopSearch {
+		ctx.nPositionCount = 0
+		res := pos.searchAlphaBeta(ctx, -mateValue, mateValue, maxDepth)
+		if ctx.stopSearch {
 			maxDepth--
 			break
 		}
 		vl = res
-		bestMove = searchCtx.mvResult
-		nPositions = searchCtx.nPositionCount
+		bestMove = ctx.mvResult
+		nPositions = ctx.nPositionCount
 		if vl > winValue || vl < -winValue {
 			break
 		}
 	}
-	logrus.Infof("search depth: %d, search nodes: %d, search time: %v", maxDepth, nPositions, time.Now().Sub(startTime))
+	logrus.Infof("search depth: %d, search nodes: %d, search time: %v, best move: %v", maxDepth, nPositions, time.Now().Sub(startTime), bestMove)
 	return bestMove, vl
 }
 func (pos *Position) String() string {
@@ -386,10 +616,10 @@ func (pos *Position) String() string {
 func CreatePosition() *Position {
 	pos := &Position{}
 	pos.playerSd = SdRed
+	pos.mvStack = make([]HistoryMove, 1, limitDepth*2)
 	return pos
 }
 
-var kingMoveTab = [4]Square{-0x10, -0x01, +0x01, +0x10}
 var lineMoveDelta = [4]Square{-0x10, -0x01, +0x01, +0x10}
 var advisorMoveTab = [4]Square{-0x11, -0x0f, +0x0f, +0x11}
 var bishopMoveTab = [4]Square{-0x22, -0x1e, +0x1e, +0x22}
@@ -559,4 +789,11 @@ var pieceValue = [7][256]int{
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	},
+}
+
+// mvv 子力价值
+var mvvLvaPieceValue = []int{
+	0, 0, 0, 0, 0, 0, 0, 0,
+	5, 1, 1, 3, 4, 3, 2, 0,
+	5, 1, 1, 3, 4, 3, 2, 0,
 }
