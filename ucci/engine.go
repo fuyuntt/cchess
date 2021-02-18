@@ -47,7 +47,7 @@ func (engine *Engine) isReady(ctx *CmdCtx) {
 }
 
 func (engine *Engine) position(fen string) {
-	position, err := parsePosition(fen)
+	position, err := ppos.ParsePosition(fen)
 	if err != nil {
 		logrus.Errorf("parse position failure, position: %s, err: %v", fen, err)
 	}
