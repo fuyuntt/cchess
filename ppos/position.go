@@ -32,8 +32,6 @@ const nullPruneThreshold = 400
 const nullPruneDepth = 2
 
 type searchCtx struct {
-	// 电脑走的棋
-	mvResult Move
 
 	// 已搜索的局面数
 	nPositionCount int
@@ -325,7 +323,7 @@ func (pos *Position) GenerateMoves(moves []Move, onlyCapture bool) []Move {
 func (pos *Position) MakeMove(move Move) bool {
 	preZob := pos.zobrist
 	pcCaptured := pos.MovePiece(move)
-	if pos.Checked() {
+	if move != MvNop && pos.Checked() {
 		pos.UndoMovePiece(move, pcCaptured)
 		return false
 	}
@@ -335,23 +333,10 @@ func (pos *Position) MakeMove(move Move) bool {
 	return true
 }
 
-// 等效 MakeMove(MvNop) 但是更快
-func (pos *Position) makeNullMove() {
-	pos.ChangeSide()
-	pos.mvStack = append(pos.mvStack, HistoryMove{MvNop, PcNop, pos.InCheck(), pos.zobrist})
-	pos.nDistance++
-}
 func (pos *Position) UndoMakeMove() {
 	pos.ChangeSide()
 	moveHis := pos.mvStack[pos.nDistance]
 	pos.UndoMovePiece(moveHis.move, moveHis.pcCaptured)
-	pos.nDistance--
-	pos.mvStack = pos.mvStack[:pos.nDistance+1]
-}
-
-// 等效 UndoMakeMove() 但是更快
-func (pos *Position) undoNullMove() {
-	pos.ChangeSide()
 	pos.nDistance--
 	pos.mvStack = pos.mvStack[:pos.nDistance+1]
 }
@@ -364,7 +349,9 @@ func (pos *Position) nullOk() bool {
 		return pos.vlBlack > nullPruneThreshold
 	}
 }
-func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int) int {
+
+// return 评价值，主要变例(逆序）
+func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int) (int, []Move) {
 	tickSearch(ctx)
 	if pos.nDistance > ctx.initDistance {
 		// 1. 到达水平线，使用静态局面搜索
@@ -375,30 +362,32 @@ func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int)
 		// 1-1. 检查重复局面
 		rep, vl := pos.CheckReputation()
 		if rep {
-			return vl
+			return vl, nil
 		}
 
 		// 1-2. 到达极限深度就返回局面评价
 		if pos.nDistance == ctx.maxDistance {
-			return pos.Evaluate()
+			return pos.Evaluate(), nil
 		}
 
 		// 1-3. 尝试空步裁剪
 		if !ctx.inNullMoveSearch && !pos.InCheck() && pos.nullOk() {
 			ctx.inNullMoveSearch = true
-			pos.makeNullMove()
+			pos.MakeMove(MvNop)
 			// 窗口缩小
-			vl = -pos.searchAlphaBeta(ctx, -vlBeta, 1-vlBeta, depth-1-nullPruneDepth)
-			pos.undoNullMove()
+			vl, _ = pos.searchAlphaBeta(ctx, -vlBeta, 1-vlBeta, depth-1-nullPruneDepth)
+			vl = -vl
+			pos.UndoMakeMove()
 			ctx.inNullMoveSearch = false
 			if vl >= vlBeta {
-				return vl
+				return vl, nil
 			}
 		}
 	}
 
 	moves := make([]Move, 0, initMovesSize)
 	vlBest := -mateValue
+	var pvMovesBest []Move
 	var mvBest = MvNop
 	moves = pos.GenerateMoves(moves, false)
 	sort.Sort(MoveSorter{moves: moves, eval: func(mv Move) int {
@@ -408,10 +397,11 @@ func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int)
 		if !pos.MakeMove(mv) {
 			continue
 		}
-		vl := -pos.searchAlphaBeta(ctx, -vlBeta, -vlAlpha, depth-1)
+		vl, pvMoves := pos.searchAlphaBeta(ctx, -vlBeta, -vlAlpha, depth-1)
+		vl = -vl
 		pos.UndoMakeMove()
 		if ctx.stopSearch {
-			return 0
+			return 0, nil
 		}
 		if vl > vlBest {
 			vlBest = vl
@@ -422,20 +412,22 @@ func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int)
 			if vl > vlAlpha {
 				mvBest = mv
 				vlAlpha = vl
+				pvMovesBest = append(pvMoves, mv)
 			}
 		}
 	}
 	// 所有的move都无法走 杀棋!
 	if vlBest == -mateValue {
-		return pos.nDistance - ctx.initDistance - mateValue
+		return pos.nDistance - ctx.initDistance - mateValue, nil
 	}
 	if mvBest != MvNop {
 		ctx.historyTable[mvBest] += depth * depth
-		if pos.nDistance == ctx.initDistance {
-			ctx.mvResult = mvBest
-		}
 	}
-	return vlBest
+	if vlBest != vlAlpha {
+		return vlBest, nil
+	} else {
+		return vlBest, pvMovesBest
+	}
 }
 
 // 搜索中的状态检查
@@ -445,20 +437,21 @@ func tickSearch(searchCtx *searchCtx) {
 		searchCtx.stopSearch = true
 	}
 }
-func (pos *Position) searchQuiescent(ctx *searchCtx, vlAlpha, vlBeta int) int {
+func (pos *Position) searchQuiescent(ctx *searchCtx, vlAlpha, vlBeta int) (int, []Move) {
 	// 1. 检查重复局面
 	rep, vl := pos.CheckReputation()
 	if rep {
-		return vl
+		return vl, nil
 	}
 
 	// 2. 到达极限深度就返回局面评价
 	if pos.nDistance == ctx.maxDistance {
-		return pos.Evaluate()
+		return pos.Evaluate(), nil
 	}
 
 	// 3. 初始化最佳值
 	vlBest := -mateValue
+	var pvMoveBest []Move
 
 	moves := make([]Move, 0, initMovesSize)
 	if pos.InCheck() {
@@ -473,7 +466,7 @@ func (pos *Position) searchQuiescent(ctx *searchCtx, vlAlpha, vlBeta int) int {
 		if vl > vlBest {
 			vlBest = vl
 			if vl >= vlBeta {
-				return vl
+				return vl, nil
 			}
 			if vl > vlAlpha {
 				vlAlpha = vl
@@ -492,24 +485,28 @@ func (pos *Position) searchQuiescent(ctx *searchCtx, vlAlpha, vlBeta int) int {
 		if !pos.MakeMove(mv) {
 			continue
 		}
-		vl = -pos.searchQuiescent(ctx, -vlBeta, -vlAlpha)
+		vl, pvMove := pos.searchQuiescent(ctx, -vlBeta, -vlAlpha)
+		vl = -vl
 		pos.UndoMakeMove()
 
 		if vl > vlBest {
 			vlBest = vl
 			if vl >= vlBeta {
-				return vl
+				return vl, nil
 			}
 			if vl > vlAlpha {
 				vlAlpha = vl
+				pvMoveBest = append(pvMove, mv)
 			}
 		}
 	}
 
 	if vlBest == -mateValue {
-		return pos.nDistance - ctx.initDistance - mateValue
+		return pos.nDistance - ctx.initDistance - mateValue, nil
+	} else if vlBest != vlAlpha {
+		return vlBest, nil
 	} else {
-		return vlBest
+		return vlBest, pvMoveBest
 	}
 }
 
@@ -562,53 +559,52 @@ func reputationValue(selfAlwaysCheck, opAlwaysCheck bool) int {
 	}
 	return vl
 }
-func (pos *Position) SearchMain(duration time.Duration) (Move, int) {
+func (pos *Position) SearchMain(duration time.Duration) ([]Move, int) {
 	startTime := time.Now()
 	ctx := &searchCtx{}
 	ctx.stopSearchTime = time.Now().Add(duration)
 	ctx.initDistance = pos.nDistance
 	ctx.maxDistance = pos.nDistance + limitDepth
-	vl := 0
-	bestMove := MvNop
+	var resValue int
+	var resPvMove []Move
 	nPositions := 0
 	maxDepth := 0
 	for ; maxDepth < limitDepth; maxDepth++ {
 		ctx.nPositionCount = 0
-		res := pos.searchAlphaBeta(ctx, -mateValue, mateValue, maxDepth)
+		value, pvMoves := pos.searchAlphaBeta(ctx, -mateValue, mateValue, maxDepth)
 		if ctx.stopSearch {
 			maxDepth--
 			break
 		}
-		vl = res
-		bestMove = ctx.mvResult
+		resValue = value
+		resPvMove = pvMoves
 		nPositions = ctx.nPositionCount
-		if vl > winValue || vl < -winValue {
+		if resValue > winValue || resValue < -winValue {
 			break
 		}
 	}
-	logrus.Infof("search depth: %d, search nodes: %d, search time: %v, best move: %v", maxDepth, nPositions, time.Now().Sub(startTime), bestMove)
-	return bestMove, vl
+	revertSlice(resPvMove)
+	logrus.Infof("search depth: %d, search nodes: %d, search time: %v, pv moves: %v", maxDepth, nPositions, time.Now().Sub(startTime), resPvMove)
+	return resPvMove, resValue
 }
 func (pos *Position) String() string {
 	var sb strings.Builder
 	for i := 0; i < 10; i++ {
-		if i == 4 || i == 5 {
-			sb.WriteRune('-')
-		} else {
-			sb.WriteRune(' ')
-		}
-		sb.WriteString(pos.pcSquares[GetSquare(3, i+3)].String())
+		sb.WriteRune(rune('0' + 9 - i))
+		sb.WriteRune(' ')
+		sb.WriteString(pos.pcSquares[GetSquare(0, i)].String())
 		for j := 1; j < 9; j++ {
 			sb.WriteRune('-')
-			sb.WriteString(pos.pcSquares[GetSquare(j+3, i+3)].String())
-		}
-		if i == 4 || i == 5 {
-			sb.WriteRune('-')
-		} else {
-			sb.WriteRune(' ')
+			sb.WriteString(pos.pcSquares[GetSquare(j, i)].String())
 		}
 		sb.WriteRune('\n')
 	}
+	sb.WriteString("  a")
+	for i := 1; i < 9; i++ {
+		sb.WriteRune(' ')
+		sb.WriteRune(rune('a' + i))
+	}
+	sb.WriteRune('\n')
 	return sb.String()
 }
 
@@ -619,181 +615,8 @@ func CreatePosition() *Position {
 	pos.mvStack = make([]HistoryMove, 1, limitDepth*2)
 	return pos
 }
-
-var lineMoveDelta = [4]Square{-0x10, -0x01, +0x01, +0x10}
-var advisorMoveTab = [4]Square{-0x11, -0x0f, +0x0f, +0x11}
-var bishopMoveTab = [4]Square{-0x22, -0x1e, +0x1e, +0x22}
-var knightMoveTab = [8]Square{-0x21, -0x1f, -0x12, -0x0e, +0x0e, +0x12, +0x1f, +0x21}
-var knightMovePinTab = [512]Square{
-	0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, -0x10, 0, -0x10, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, -0x01, 0, 0, 0, +0x01, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, -0x01, 0, 0, 0, +0x01, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0x10, 0, 0x10, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0,
-}
-
-func getKnightPin(sqSrc Square, sqDst Square) Square {
-	return sqSrc + knightMovePinTab[256+sqDst-sqSrc]
-}
-func sqForward(sq Square, sd Side) Square {
-	return sq + Square((sd>>1)<<5-0x10)
-}
-
-// 子力位置价值表
-var pieceValue = [7][256]int{
-	{ // 帅(将)
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 11, 15, 11, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	}, { // 仕(士)
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 20, 0, 20, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 23, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 20, 0, 20, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	}, { // 相(象)
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 20, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 18, 0, 0, 0, 23, 0, 0, 0, 18, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 20, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	}, { // 马
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 90, 90, 90, 96, 90, 96, 90, 90, 90, 0, 0, 0, 0,
-		0, 0, 0, 90, 96, 103, 97, 94, 97, 103, 96, 90, 0, 0, 0, 0,
-		0, 0, 0, 92, 98, 99, 103, 99, 103, 99, 98, 92, 0, 0, 0, 0,
-		0, 0, 0, 93, 108, 100, 107, 100, 107, 100, 108, 93, 0, 0, 0, 0,
-		0, 0, 0, 90, 100, 99, 103, 104, 103, 99, 100, 90, 0, 0, 0, 0,
-		0, 0, 0, 90, 98, 101, 102, 103, 102, 101, 98, 90, 0, 0, 0, 0,
-		0, 0, 0, 92, 94, 98, 95, 98, 95, 98, 94, 92, 0, 0, 0, 0,
-		0, 0, 0, 93, 92, 94, 95, 92, 95, 94, 92, 93, 0, 0, 0, 0,
-		0, 0, 0, 85, 90, 92, 93, 78, 93, 92, 90, 85, 0, 0, 0, 0,
-		0, 0, 0, 88, 85, 90, 88, 90, 88, 90, 85, 88, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	}, { // 车
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 206, 208, 207, 213, 214, 213, 207, 208, 206, 0, 0, 0, 0,
-		0, 0, 0, 206, 212, 209, 216, 233, 216, 209, 212, 206, 0, 0, 0, 0,
-		0, 0, 0, 206, 208, 207, 214, 216, 214, 207, 208, 206, 0, 0, 0, 0,
-		0, 0, 0, 206, 213, 213, 216, 216, 216, 213, 213, 206, 0, 0, 0, 0,
-		0, 0, 0, 208, 211, 211, 214, 215, 214, 211, 211, 208, 0, 0, 0, 0,
-		0, 0, 0, 208, 212, 212, 214, 215, 214, 212, 212, 208, 0, 0, 0, 0,
-		0, 0, 0, 204, 209, 204, 212, 214, 212, 204, 209, 204, 0, 0, 0, 0,
-		0, 0, 0, 198, 208, 204, 212, 212, 212, 204, 208, 198, 0, 0, 0, 0,
-		0, 0, 0, 200, 208, 206, 212, 200, 212, 206, 208, 200, 0, 0, 0, 0,
-		0, 0, 0, 194, 206, 204, 212, 200, 212, 204, 206, 194, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	}, { // 炮
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 100, 100, 96, 91, 90, 91, 96, 100, 100, 0, 0, 0, 0,
-		0, 0, 0, 98, 98, 96, 92, 89, 92, 96, 98, 98, 0, 0, 0, 0,
-		0, 0, 0, 97, 97, 96, 91, 92, 91, 96, 97, 97, 0, 0, 0, 0,
-		0, 0, 0, 96, 99, 99, 98, 100, 98, 99, 99, 96, 0, 0, 0, 0,
-		0, 0, 0, 96, 96, 96, 96, 100, 96, 96, 96, 96, 0, 0, 0, 0,
-		0, 0, 0, 95, 96, 99, 96, 100, 96, 99, 96, 95, 0, 0, 0, 0,
-		0, 0, 0, 96, 96, 96, 96, 96, 96, 96, 96, 96, 0, 0, 0, 0,
-		0, 0, 0, 97, 96, 100, 99, 101, 99, 100, 96, 97, 0, 0, 0, 0,
-		0, 0, 0, 96, 97, 98, 98, 98, 98, 98, 97, 96, 0, 0, 0, 0,
-		0, 0, 0, 96, 96, 97, 99, 99, 99, 97, 96, 96, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	}, { // 兵(卒)
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 9, 9, 9, 11, 13, 11, 9, 9, 9, 0, 0, 0, 0,
-		0, 0, 0, 19, 24, 34, 42, 44, 42, 34, 24, 19, 0, 0, 0, 0,
-		0, 0, 0, 19, 24, 32, 37, 37, 37, 32, 24, 19, 0, 0, 0, 0,
-		0, 0, 0, 19, 23, 27, 29, 30, 29, 27, 23, 19, 0, 0, 0, 0,
-		0, 0, 0, 14, 18, 20, 27, 29, 27, 20, 18, 14, 0, 0, 0, 0,
-		0, 0, 0, 7, 0, 13, 0, 16, 0, 13, 0, 7, 0, 0, 0, 0,
-		0, 0, 0, 7, 0, 7, 0, 15, 0, 7, 0, 7, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	},
-}
-
-// mvv 子力价值
-var mvvLvaPieceValue = []int{
-	0, 0, 0, 0, 0, 0, 0, 0,
-	5, 1, 1, 3, 4, 3, 2, 0,
-	5, 1, 1, 3, 4, 3, 2, 0,
+func revertSlice(mvs []Move) {
+	for i, j := 0, len(mvs)-1; i < j; i, j = i+1, j-1 {
+		mvs[i], mvs[j] = mvs[j], mvs[i]
+	}
 }

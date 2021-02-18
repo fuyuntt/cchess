@@ -31,7 +31,7 @@ func TestPosition(t *testing.T) {
 	pos.AddPiece(Square(0x69), PcRKnight)
 	fmt.Println(pos.String())
 	mv, vl := pos.SearchMain(30 * time.Second)
-	fmt.Println(mv.String(), vl)
+	fmt.Println(mv, vl)
 }
 
 func TestPositionBishop(t *testing.T) {
@@ -40,12 +40,12 @@ func TestPositionBishop(t *testing.T) {
 	pos.AddPiece(Square(0x85), PcBRook)
 	pos.AddPiece(Square(0xc9), PcBPawn)
 	mv, _ := pos.SearchMain(1 * time.Second)
-	if mv != 0x85a7 {
+	if mv[0] != 0x85a7 {
 		t.Errorf("should capture rook, %v", mv)
 	}
 	pos.AddPiece(0x96, PcBBishop)
 	mv, _ = pos.SearchMain(1 * time.Second)
-	if mv != 0xc9a7 {
+	if mv[0] != 0xc9a7 {
 		t.Errorf("should capture pawn, %v", mv)
 	}
 }

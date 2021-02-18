@@ -55,10 +55,9 @@ func (engine *Engine) position(fen string) {
 }
 
 func (engine *Engine) goThink(ctx *CmdCtx) {
-	move, vl := engine.pos.SearchMain(3 * time.Second)
-	mvStr := move.ICCS()
-	logrus.Infof("move: %s, vl %d", mvStr, vl)
-	ctx.fPrintln("bestmove " + mvStr)
+	moves, vl := engine.pos.SearchMain(3 * time.Second)
+	logrus.Infof("moves: %v, vl %d", moves, vl)
+	ctx.fPrintln("bestmove " + moves[0].String())
 }
 
 func (engine *Engine) quit(ctx *CmdCtx) {
