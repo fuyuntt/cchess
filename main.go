@@ -23,7 +23,6 @@ func main() {
 		if err == nil {
 			logrus.SetOutput(file)
 		}
-		//go networkEngine()
 		deal(os.Stdin, os.Stdout)
 	}
 }
