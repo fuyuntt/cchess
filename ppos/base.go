@@ -40,9 +40,9 @@ func (pc Piece) GetType() PieceType {
 func (pc Piece) String() string {
 	pcType := pc.GetType()
 	if pc.GetSide() == SdRed {
-		return "kabnrcp"[pcType : pcType+1]
-	} else if pc.GetSide() == SdBlack {
 		return "KABNRCP"[pcType : pcType+1]
+	} else if pc.GetSide() == SdBlack {
+		return "kabnrcp"[pcType : pcType+1]
 	} else {
 		return "+"
 	}

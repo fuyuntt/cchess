@@ -46,10 +46,10 @@ func (engine *Engine) isReady(ctx *CmdCtx) {
 	ctx.fPrintln("readyok")
 }
 
-func (engine *Engine) position(fen string) {
-	position, err := ppos.ParsePosition(fen)
+func (engine *Engine) position(positionStr string) {
+	position, err := ppos.CreatePositionFromPosStr(positionStr)
 	if err != nil {
-		logrus.Errorf("parse position failure, position: %s, err: %v", fen, err)
+		logrus.Errorf("parse position failure, position: %s, err: %v", positionStr, err)
 	}
 	engine.pos = position
 }

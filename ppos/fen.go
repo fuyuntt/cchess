@@ -2,6 +2,8 @@ package ppos
 
 import (
 	"fmt"
+	"github.com/fuyuntt/cchess/util"
+	"regexp"
 	"strings"
 )
 
@@ -25,44 +27,40 @@ var pieceMap = map[int32]Piece{
 
 const initFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"
 
-//var positionRegexp = regexp.MustCompile(`^(?:(?P<fen>fen [kabnrcpKABNRCP1-9/]+ [wrb] - - \d+ \d+)|(?P<startpos>startpos))(?P<moves> moves( [a-i]\d[a-i]\d)+)?$`)
-func ParsePosition(positionStr string) (*Position, error) {
-	parts := strings.Split(positionStr, " ")
+var positionRegexp = regexp.MustCompile(`^(?:fen (?P<fen>[kabnrcpKABNRCP1-9/]+ [wrb] - - \d+ \d+)|(?P<startpos>startpos))(?: moves (?P<moves>[a-i]\d[a-i]\d(?: [a-i]\d[a-i]\d)*))?$`)
+
+func parsePosition(positionStr string) (*Position, error) {
+	groups := util.ParseGroup(positionRegexp, positionStr)
 	var pos *Position
-	var i = 0
-	for i < len(parts) {
-		cmd := parts[i]
-		switch cmd {
+	for _, group := range groups {
+		switch group.Key {
 		case "fen":
-			if len(parts) <= i+6 {
-				return nil, fmt.Errorf("illegle fen: %s", positionStr)
-			}
-			var err error
-			pos, err = ParseFen(strings.Join(parts[1:7], " "))
+			fenPos, err := parseFen(group.Value)
 			if err != nil {
-				return nil, fmt.Errorf("fen parse failure: %s, err:%v", positionStr, err)
+				return nil, err
 			}
-			i += 7
+			pos = fenPos
 		case "startpos":
-			pos, _ = ParseFen(initFen)
-			i += 1
+			fenPos, err := parseFen(initFen)
+			if err != nil {
+				return nil, err
+			}
+			pos = fenPos
 		case "moves":
 			if pos == nil {
-				return nil, fmt.Errorf("illegle positionStr: %s", positionStr)
+				continue
 			}
-			for i++; i < len(parts); i++ {
-				mv := parts[i]
-				success := pos.MakeMove(GetMoveFromICCS(mv))
-				if !success {
-					return nil, fmt.Errorf("illegl move: %s", positionStr)
-				}
+			for _, mv := range strings.Split(group.Value, " ") {
+				pos.MakeMove(GetMoveFromICCS(mv))
 			}
 		}
 	}
+	if pos == nil {
+		return nil, fmt.Errorf("illegle positionStr: %s", positionStr)
+	}
 	return pos, nil
 }
-
-func ParseFen(fenStr string) (*Position, error) {
+func parseFen(fenStr string) (*Position, error) {
 	pos := CreatePosition()
 	fenParts := strings.Split(fenStr, " ")
 	x, y := 0, 0

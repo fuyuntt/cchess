@@ -607,6 +607,39 @@ func (pos *Position) String() string {
 	sb.WriteRune('\n')
 	return sb.String()
 }
+func (pos *Position) FenString() string {
+	var sb strings.Builder
+	for y := 0; y < 10; y++ {
+		var spaceCount int
+		for x := 0; x < 9; x++ {
+			pc := pos.pcSquares[GetSquare(x, y)]
+			if pc == PcNop {
+				spaceCount++
+			} else {
+				if spaceCount != 0 {
+					sb.WriteRune(rune('0' + spaceCount))
+					spaceCount = 0
+				}
+				sb.WriteString(pc.String())
+			}
+		}
+		if spaceCount != 0 {
+			sb.WriteRune(rune('0' + spaceCount))
+			spaceCount = 0
+		}
+		if y != 9 {
+			sb.WriteRune('/')
+		}
+	}
+	sb.WriteRune(' ')
+	if pos.playerSd == SdRed {
+		sb.WriteRune('r')
+	} else {
+		sb.WriteRune('b')
+	}
+	sb.WriteString(" - - 0 1")
+	return sb.String()
+}
 
 // 创建局面
 func CreatePosition() *Position {
@@ -614,6 +647,12 @@ func CreatePosition() *Position {
 	pos.playerSd = SdRed
 	pos.mvStack = make([]HistoryMove, 1, limitDepth*2)
 	return pos
+}
+func CreatePositionFromPosStr(positionStr string) (*Position, error) {
+	return parsePosition(positionStr)
+}
+func CreatePositionFromFenStr(fenStr string) (*Position, error) {
+	return parseFen(fenStr)
 }
 func revertSlice(mvs []Move) {
 	for i, j := 0, len(mvs)-1; i < j; i, j = i+1, j-1 {
