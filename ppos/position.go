@@ -37,16 +37,58 @@ type searchCtx struct {
 	// 此次搜索最大距离
 	maxDistance int
 	// 历史表
-	historyTable [65536]int
+	historyMoveTable [65536]int
+	// hash表
+	historyPosTable [65536]historyPosition
 }
 
-type HistoryMove struct {
+const hashIdxMask = 0xffff
+
+func (ctx *searchCtx) probeHash(zob ZobristHash, depth int, alpha int, beta int) (bool, int) {
+	hisPosition := &ctx.historyPosTable[zob&hashIdxMask]
+	if hisPosition.zobrist != zob || hisPosition.depth < depth {
+		return false, 0
+	}
+	if hisPosition.posType == hisExact {
+		return true, hisPosition.value
+	} else if hisPosition.posType == hisAlpha && hisPosition.value <= alpha {
+		return true, alpha
+	} else if hisPosition.posType == hisBeta && hisPosition.value >= beta {
+		return true, beta
+	}
+	return false, 0
+}
+func (ctx *searchCtx) recordHash(zob ZobristHash, depth int, value int, posType historyType) {
+	hisPosition := &ctx.historyPosTable[zob&hashIdxMask]
+	if hisPosition.zobrist == zob && hisPosition.depth > depth {
+		return
+	}
+	hisPosition.zobrist = zob
+	hisPosition.depth = depth
+	hisPosition.posType = posType
+	hisPosition.value = value
+}
+
+type historyMove struct {
 	move       Move
 	pcCaptured Piece
 	checked    bool
 	posZobrist ZobristHash
 }
+type historyType uint8
 
+const (
+	hisExact historyType = iota
+	hisAlpha
+	hisBeta
+)
+
+type historyPosition struct {
+	zobrist ZobristHash
+	depth   int
+	posType historyType
+	value   int
+}
 type Position struct {
 	// 棋盘
 	pcSquares [256]Piece
@@ -59,7 +101,7 @@ type Position struct {
 	// 局面zobrist
 	zobrist ZobristHash
 	// 走棋栈，可从中找到是否有重复局面
-	mvStack []HistoryMove
+	mvStack []historyMove
 	// 距离根节点的步数
 	nDistance int
 }
@@ -310,7 +352,7 @@ func (pos *Position) MakeMove(move Move) bool {
 		return false
 	}
 	pos.ChangeSide()
-	pos.mvStack = append(pos.mvStack, HistoryMove{move, pcCaptured, pos.Checked(), preZob})
+	pos.mvStack = append(pos.mvStack, historyMove{move, pcCaptured, pos.Checked(), preZob})
 	pos.nDistance++
 	return true
 }
@@ -326,6 +368,10 @@ func (pos *Position) UndoMakeMove() {
 // return 评价值，主要变例(逆序）
 func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int) (int, []Move) {
 	tickSearch(ctx)
+	success, vl := ctx.probeHash(pos.zobrist, depth, vlAlpha, vlBeta)
+	if success {
+		return vl, nil
+	}
 	if pos.nDistance > ctx.initDistance {
 		// 1. 到达水平线，使用静态局面搜索
 		if depth <= 0 {
@@ -350,7 +396,7 @@ func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int)
 	var mvBest = MvNop
 	moves = pos.GenerateMoves(moves, false)
 	sort.Sort(MoveSorter{moves: moves, eval: func(mv Move) int {
-		return ctx.historyTable[mv]
+		return ctx.historyMoveTable[mv]
 	}})
 	for _, mv := range moves {
 		if !pos.MakeMove(mv) {
@@ -380,11 +426,17 @@ func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int)
 		return pos.nDistance - ctx.initDistance - mateValue, nil
 	}
 	if mvBest != MvNop {
-		ctx.historyTable[mvBest] += depth * depth
+		ctx.historyMoveTable[mvBest] += depth * depth
 	}
 	if vlBest != vlAlpha {
+		if vlBest >= vlBeta {
+			ctx.recordHash(pos.zobrist, depth, vlBest, hisBeta)
+		} else {
+			ctx.recordHash(pos.zobrist, depth, vlBest, hisAlpha)
+		}
 		return vlBest, nil
 	} else {
+		ctx.recordHash(pos.zobrist, depth, vlBest, hisExact)
 		return vlBest, pvMovesBest
 	}
 }
@@ -417,7 +469,7 @@ func (pos *Position) searchQuiescent(ctx *searchCtx, vlAlpha, vlBeta int) (int, 
 		// 4. 如果被将军，则生成全部走法
 		moves = pos.GenerateMoves(moves, false)
 		sort.Sort(MoveSorter{moves: moves, eval: func(mv Move) int {
-			return ctx.historyTable[mv]
+			return ctx.historyMoveTable[mv]
 		}})
 	} else {
 		// 5. 如果不被将军，先做局面评价
@@ -604,7 +656,7 @@ func (pos *Position) FenString() string {
 func CreatePosition() *Position {
 	pos := &Position{}
 	pos.playerSd = SdRed
-	pos.mvStack = make([]HistoryMove, 1, limitDepth*2)
+	pos.mvStack = make([]historyMove, 1, limitDepth*2)
 	return pos
 }
 func CreatePositionFromPosStr(positionStr string) (*Position, error) {
