@@ -25,32 +25,17 @@ const winValue = mateValue - 100
 // 先行优势
 const advancedValue = 3
 
-// 空着裁剪阈值
-const nullPruneThreshold = 400
-
-// 空着裁剪深度
-const nullPruneDepth = 2
-
 type searchCtx struct {
-
 	// 已搜索的局面数
 	nPositionCount int
-
 	// 停止搜索的时间
 	stopSearchTime time.Time
-
 	// 停止搜索
 	stopSearch bool
-
-	// 在空着搜索过程中
-	inNullMoveSearch bool
-
 	// 开始搜索时局面的distance
 	initDistance int
-
 	// 此次搜索最大距离
 	maxDistance int
-
 	// 历史表
 	historyTable [65536]int
 }
@@ -71,13 +56,10 @@ type Position struct {
 	vlRed int
 	// 黑旗分
 	vlBlack int
-
 	// 局面zobrist
 	zobrist ZobristHash
-
 	// 走棋栈，可从中找到是否有重复局面
 	mvStack []HistoryMove
-
 	// 距离根节点的步数
 	nDistance int
 }
@@ -341,15 +323,6 @@ func (pos *Position) UndoMakeMove() {
 	pos.mvStack = pos.mvStack[:pos.nDistance+1]
 }
 
-// 当前局面能否空着裁剪
-func (pos *Position) nullOk() bool {
-	if pos.playerSd == SdRed {
-		return pos.vlRed > nullPruneThreshold
-	} else {
-		return pos.vlBlack > nullPruneThreshold
-	}
-}
-
 // return 评价值，主要变例(逆序）
 func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int) (int, []Move) {
 	tickSearch(ctx)
@@ -368,20 +341,6 @@ func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int)
 		// 1-2. 到达极限深度就返回局面评价
 		if pos.nDistance == ctx.maxDistance {
 			return pos.Evaluate(), nil
-		}
-
-		// 1-3. 尝试空步裁剪
-		if !ctx.inNullMoveSearch && !pos.InCheck() && pos.nullOk() {
-			ctx.inNullMoveSearch = true
-			pos.MakeMove(MvNop)
-			// 窗口缩小
-			vl, _ = pos.searchAlphaBeta(ctx, -vlBeta, 1-vlBeta, depth-1-nullPruneDepth)
-			vl = -vl
-			pos.UndoMakeMove()
-			ctx.inNullMoveSearch = false
-			if vl >= vlBeta {
-				return vl, nil
-			}
 		}
 	}
 
