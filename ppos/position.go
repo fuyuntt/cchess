@@ -572,6 +572,7 @@ func reputationValue(selfAlwaysCheck, opAlwaysCheck bool) int {
 }
 func (pos *Position) SearchMain(duration time.Duration) ([]Move, int) {
 	startTime := time.Now()
+	effectiveEndTime := time.Now()
 	ctx := &searchCtx{}
 	ctx.stopSearchTime = time.Now().Add(duration)
 	ctx.initDistance = pos.nDistance
@@ -590,12 +591,13 @@ func (pos *Position) SearchMain(duration time.Duration) ([]Move, int) {
 		resValue = value
 		resPvMove = pvMoves
 		nPositions = ctx.nPositionCount
+		effectiveEndTime = time.Now()
 		if resValue > winValue || resValue < -winValue {
 			break
 		}
 	}
 	revertSlice(resPvMove)
-	logrus.Infof("search depth: %d, search nodes: %d, search time: %v, pv moves: %v", maxDepth, nPositions, time.Now().Sub(startTime), resPvMove)
+	logrus.Infof("search depth: %d, search nodes: %d, search time: %v, effect time:%v, score:%v, pv moves: %v", maxDepth, nPositions, time.Now().Sub(startTime), effectiveEndTime.Sub(startTime), resValue, resPvMove)
 	return resPvMove, resValue
 }
 func (pos *Position) String() string {
