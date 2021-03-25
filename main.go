@@ -32,7 +32,9 @@ func main() {
 func networkEngine(port int) {
 	http.HandleFunc("/is-legal-move", client.LegalMove)
 	http.HandleFunc("/think", client.Think)
-	_ = http.ListenAndServe(":"+strconv.Itoa(port), nil)
+	logrus.Info("start http server")
+	err := http.ListenAndServe(":"+strconv.Itoa(port), nil)
+	logrus.Errorf("stop server. err=%v", err)
 }
 
 func deal(reader io.Reader, writer io.Writer) {
