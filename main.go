@@ -3,12 +3,13 @@ package main
 import (
 	"bufio"
 	"flag"
-	"fmt"
+	"github.com/fuyuntt/cchess/client"
 	"github.com/fuyuntt/cchess/ucci"
 	"github.com/sirupsen/logrus"
 	"io"
-	"net"
+	"net/http"
 	"os"
+	"strconv"
 )
 
 var serverMode = flag.Bool("s", false, "open server mode")
@@ -27,23 +28,11 @@ func main() {
 	}
 }
 
-// 网络引擎 可配合客户端使用
+// 网络引擎 需配合gui客户端使用
 func networkEngine(port int) {
-	listen, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
-	if err != nil {
-		logrus.Errorf("监听端口失败, err=%v", err)
-		return
-	}
-	logrus.Infof("start listening: %v", listen.Addr())
-	for {
-		conn, err := listen.Accept()
-		if err != nil {
-			logrus.Errorf("获取连接失败， err=%v", err)
-			return
-		}
-		logrus.Infof("accept connection: %v", conn.RemoteAddr())
-		go deal(conn, conn)
-	}
+	http.HandleFunc("/is-legal-move", client.LegalMove)
+	http.HandleFunc("/think", client.Think)
+	_ = http.ListenAndServe(":"+strconv.Itoa(port), nil)
 }
 
 func deal(reader io.Reader, writer io.Writer) {

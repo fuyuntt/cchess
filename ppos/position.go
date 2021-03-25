@@ -11,7 +11,7 @@ import (
 const limitDepth = 64
 
 // 初始move长度
-const initMovesSize = 40
+const initMovesSize = 60
 
 // 杀棋分
 const mateValue = 10000
@@ -217,7 +217,8 @@ func (pos *Position) Checked() bool {
 }
 
 // onlyCapture=ture  只生成吃子的走法，否则生成所有走法
-func (pos *Position) GenerateMoves(moves []Move, onlyCapture bool) []Move {
+func (pos *Position) GenerateMoves(onlyCapture bool) []Move {
+	moves := make([]Move, 0, initMovesSize)
 	var testCapture = func(pcDst Piece) bool {
 		return !onlyCapture || pcDst != PcNop
 	}
@@ -394,7 +395,7 @@ func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int)
 	vlBest := -mateValue
 	var pvMovesBest []Move
 	var mvBest = MvNop
-	moves = pos.GenerateMoves(moves, false)
+	moves = pos.GenerateMoves(false)
 	sort.Sort(MoveSorter{moves: moves, eval: func(mv Move) int {
 		return ctx.historyMoveTable[mv]
 	}})
@@ -464,10 +465,10 @@ func (pos *Position) searchQuiescent(ctx *searchCtx, vlAlpha, vlBeta int) (int, 
 	vlBest := -mateValue
 	var pvMoveBest []Move
 
-	moves := make([]Move, 0, initMovesSize)
+	var moves []Move
 	if pos.InCheck() {
 		// 4. 如果被将军，则生成全部走法
-		moves = pos.GenerateMoves(moves, false)
+		moves = pos.GenerateMoves(false)
 		sort.Sort(MoveSorter{moves: moves, eval: func(mv Move) int {
 			return ctx.historyMoveTable[mv]
 		}})
@@ -485,7 +486,7 @@ func (pos *Position) searchQuiescent(ctx *searchCtx, vlAlpha, vlBeta int) (int, 
 		}
 
 		// 6. 如果局面评价没有截断，再生成吃子走法
-		moves = pos.GenerateMoves(moves, true)
+		moves = pos.GenerateMoves(true)
 		sort.Sort(MoveSorter{moves: moves, eval: func(mv Move) int {
 			return pos.mvvLvaValue(mv)
 		}})
@@ -555,6 +556,15 @@ func (pos *Position) CheckReputation() (bool, int) {
 		selfSide = !selfSide
 	}
 	return false, 0
+}
+
+func (pos *Position) LegalMove(move Move) bool {
+	for _, mv := range pos.GenerateMoves(false) {
+		if mv == move {
+			return true
+		}
+	}
+	return false
 }
 
 func reputationValue(selfAlwaysCheck, opAlwaysCheck bool) int {
