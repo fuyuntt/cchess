@@ -30,8 +30,8 @@ func main() {
 
 // 网络引擎 需配合gui客户端使用
 func networkEngine(port int) {
-	http.HandleFunc("/is-legal-move", client.LegalMove)
-	http.HandleFunc("/think", client.Think)
+	http.HandleFunc("/api/is-legal-move", client.LegalMove)
+	http.HandleFunc("/api/think", client.Think)
 	logrus.Info("start http server")
 	err := http.ListenAndServe(":"+strconv.Itoa(port), nil)
 	logrus.Errorf("stop server. err=%v", err)

@@ -32,10 +32,6 @@ type searchCtx struct {
 	stopSearchTime time.Time
 	// 停止搜索
 	stopSearch bool
-	// 开始搜索时局面的distance
-	initDistance int
-	// 此次搜索最大距离
-	maxDistance int
 	// 历史表
 	historyMoveTable [65536]int
 	// hash表
@@ -373,20 +369,20 @@ func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int)
 	if success {
 		return vl, nil
 	}
-	if pos.nDistance > ctx.initDistance {
+	if pos.nDistance > 0 {
 		// 1. 到达水平线，使用静态局面搜索
 		if depth <= 0 {
 			return pos.searchQuiescent(ctx, vlAlpha, vlBeta)
 		}
 
 		// 1-1. 检查重复局面
-		rep, vl := pos.CheckReputation()
+		rep, vl := pos.CheckReputation(1)
 		if rep {
 			return vl, nil
 		}
 
 		// 1-2. 到达极限深度就返回局面评价
-		if pos.nDistance == ctx.maxDistance {
+		if pos.nDistance == limitDepth {
 			return pos.Evaluate(), nil
 		}
 	}
@@ -424,7 +420,7 @@ func (pos *Position) searchAlphaBeta(ctx *searchCtx, vlAlpha, vlBeta, depth int)
 	}
 	// 所有的move都无法走 杀棋!
 	if vlBest == -mateValue {
-		return pos.nDistance - ctx.initDistance - mateValue, nil
+		return pos.nDistance - mateValue, nil
 	}
 	if mvBest != MvNop {
 		ctx.historyMoveTable[mvBest] += depth * depth
@@ -451,13 +447,13 @@ func tickSearch(searchCtx *searchCtx) {
 }
 func (pos *Position) searchQuiescent(ctx *searchCtx, vlAlpha, vlBeta int) (int, []Move) {
 	// 1. 检查重复局面
-	rep, vl := pos.CheckReputation()
+	rep, vl := pos.CheckReputation(1)
 	if rep {
 		return vl, nil
 	}
 
 	// 2. 到达极限深度就返回局面评价
-	if pos.nDistance == ctx.maxDistance {
+	if pos.nDistance == limitDepth {
 		return pos.Evaluate(), nil
 	}
 
@@ -514,7 +510,7 @@ func (pos *Position) searchQuiescent(ctx *searchCtx, vlAlpha, vlBeta int) (int, 
 	}
 
 	if vlBest == -mateValue {
-		return pos.nDistance - ctx.initDistance - mateValue, nil
+		return pos.nDistance - mateValue, nil
 	} else if vlBest != vlAlpha {
 		return vlBest, nil
 	} else {
@@ -536,7 +532,7 @@ func (pos *Position) InCheck() bool {
 
 // 检查重复局面
 // return 是否有重复局面， 重复局面的评分（输，赢，和）
-func (pos *Position) CheckReputation() (bool, int) {
+func (pos *Position) CheckReputation(n int) (bool, int) {
 	selfSide := false
 	selfAlwaysCheck, opAlwaysCheck := true, true
 	for mvIdx := pos.nDistance; mvIdx > 0; mvIdx-- {
@@ -548,7 +544,10 @@ func (pos *Position) CheckReputation() (bool, int) {
 		if selfSide {
 			selfAlwaysCheck = selfAlwaysCheck && moveHistory.checked
 			if moveHistory.posZobrist == pos.zobrist {
-				return true, reputationValue(selfAlwaysCheck, opAlwaysCheck)
+				n--
+				if n == 0 {
+					return true, reputationValue(selfAlwaysCheck, opAlwaysCheck)
+				}
 			}
 		} else {
 			opAlwaysCheck = opAlwaysCheck && moveHistory.checked
@@ -561,7 +560,8 @@ func (pos *Position) CheckReputation() (bool, int) {
 func (pos *Position) LegalMove(move Move) bool {
 	for _, mv := range pos.GenerateMoves(false) {
 		if mv == move {
-			return true
+			pos.MovePiece(mv)
+			return !pos.Checked()
 		}
 	}
 	return false
@@ -581,19 +581,22 @@ func reputationValue(selfAlwaysCheck, opAlwaysCheck bool) int {
 	return vl
 }
 func (pos *Position) SearchMain(duration time.Duration) ([]Move, int) {
+	rep, score := pos.CheckReputation(3)
+	if rep {
+		return nil, score
+	}
+	cleanPos, _ := CreatePositionFromFenStr(pos.FenString())
 	startTime := time.Now()
 	effectiveEndTime := time.Now()
 	ctx := &searchCtx{}
 	ctx.stopSearchTime = time.Now().Add(duration)
-	ctx.initDistance = pos.nDistance
-	ctx.maxDistance = pos.nDistance + limitDepth
 	var resValue int
 	var resPvMove []Move
 	nPositions := 0
 	maxDepth := 0
 	for ; maxDepth < limitDepth; maxDepth++ {
 		ctx.nPositionCount = 0
-		value, pvMoves := pos.searchAlphaBeta(ctx, -mateValue, mateValue, maxDepth)
+		value, pvMoves := cleanPos.searchAlphaBeta(ctx, -mateValue, mateValue, maxDepth)
 		if ctx.stopSearch {
 			maxDepth--
 			break

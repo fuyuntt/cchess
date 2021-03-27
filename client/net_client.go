@@ -32,8 +32,12 @@ func Think(resp http.ResponseWriter, req *http.Request) {
 		logrus.Errorf("create position failure. err=%v", err)
 		return
 	}
-	res, i := pos.SearchMain(3 * time.Second)
-	logrus.Infof("think result, score: %d, moves:%v", i, res)
-	marshal, _ := json.Marshal(map[string]interface{}{"move": res[0].ICCS()})
+	res, score := pos.SearchMain(3 * time.Second)
+	var moves []string
+	for _, mv := range res {
+		moves = append(moves, mv.ICCS())
+	}
+	logrus.Infof("think result, score: %d, moves:%v", score, moves)
+	marshal, _ := json.Marshal(map[string]interface{}{"moves": moves, "score": score})
 	_, _ = resp.Write(marshal)
 }
