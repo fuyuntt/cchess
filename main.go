@@ -4,15 +4,16 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"github.com/fuyuntt/cchess/client"
-	"github.com/fuyuntt/cchess/ucci"
-	"github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fuyuntt/cchess/client"
+	"github.com/fuyuntt/cchess/ucci"
+	"github.com/sirupsen/logrus"
 )
 
 var serverMode = flag.Bool("s", false, "open server mode")
@@ -43,6 +44,7 @@ func main() {
 // 网络引擎 需配合gui客户端使用
 func networkEngine(port int) {
 	http.HandleFunc("/api/is-legal-move", client.LegalMove)
+	http.HandleFunc("/api/get-legal-moves", client.GetLegalMoves)
 	http.HandleFunc("/api/think", client.Think)
 	logrus.Infof("start http server on port: %d", port)
 	err := http.ListenAndServe(":"+strconv.Itoa(port), nil)

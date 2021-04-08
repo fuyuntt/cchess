@@ -2,10 +2,11 @@ package client
 
 import (
 	"encoding/json"
-	"github.com/fuyuntt/cchess/ppos"
-	"github.com/sirupsen/logrus"
 	"net/http"
 	"time"
+
+	"github.com/fuyuntt/cchess/ppos"
+	"github.com/sirupsen/logrus"
 )
 
 func LegalMove(resp http.ResponseWriter, req *http.Request) {
@@ -20,6 +21,30 @@ func LegalMove(resp http.ResponseWriter, req *http.Request) {
 	}
 	legal := pos.LegalMove(ppos.GetMoveFromICCS(mv))
 	marshal, _ := json.Marshal(map[string]interface{}{"isLegal": legal})
+	_, _ = resp.Write(marshal)
+}
+
+func GetLegalMoves(resp http.ResponseWriter, req *http.Request) {
+	resp.WriteHeader(200)
+	query := req.URL.Query()
+	position := query.Get("position")
+	mv := query.Get("move")
+	pos, err := ppos.CreatePositionFromPosStr(position)
+	if err != nil {
+		logrus.Errorf("create position failure. err=%v", err)
+		return
+	}
+	legalMoves := []string{}
+	for _, move := range pos.GenerateMoves(false) {
+		if move.ICCS()[:2] == mv[:2] {
+			capturedPiece := pos.MovePiece(move)
+			if !pos.Checked() {
+				legalMoves = append(legalMoves, move.ICCS())
+			}
+			pos.UndoMovePiece(move, capturedPiece)
+		}
+	}
+	marshal, _ := json.Marshal(map[string]interface{}{"legalMoves": legalMoves})
 	_, _ = resp.Write(marshal)
 }
 
