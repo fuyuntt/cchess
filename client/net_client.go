@@ -28,21 +28,22 @@ func GetLegalMoves(resp http.ResponseWriter, req *http.Request) {
 	resp.WriteHeader(200)
 	query := req.URL.Query()
 	position := query.Get("position")
-	mv := query.Get("move")
+	srcSquare := query.Get("srcSquare")
 	pos, err := ppos.CreatePositionFromPosStr(position)
 	if err != nil {
 		logrus.Errorf("create position failure. err=%v", err)
 		return
 	}
-	legalMoves := []string{}
+	var legalMoves []string
 	for _, move := range pos.GenerateMoves(false) {
-		if move.ICCS()[:2] == mv[:2] {
-			capturedPiece := pos.MovePiece(move)
-			if !pos.Checked() {
-				legalMoves = append(legalMoves, move.ICCS())
-			}
-			pos.UndoMovePiece(move, capturedPiece)
+		if move.ICCS()[:2] != srcSquare {
+			continue
 		}
+		capturedPiece := pos.MovePiece(move)
+		if !pos.Checked() {
+			legalMoves = append(legalMoves, move.ICCS())
+		}
+		pos.UndoMovePiece(move, capturedPiece)
 	}
 	marshal, _ := json.Marshal(map[string]interface{}{"legalMoves": legalMoves})
 	_, _ = resp.Write(marshal)
